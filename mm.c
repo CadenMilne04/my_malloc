@@ -45,7 +45,7 @@
 
    Note that the next pointer are only needed when the block is free. To
    achieve better utilization, mm_malloc should use the space for next as
-   part of the space it returns
+   part of the space it returns.
 
    +--------------+
    |     size     |  <-  Block pointers in free list point here
@@ -142,22 +142,13 @@ Block* searchList(size_t reqSize) {
   Block* ptrFreeBlock = first_block();
   long int checkSize = -reqSize;
 
-  // ptrFreeBlock will point to the beginning of the memory heap!
-  // end will point to the end of the memory heap.
   //
-  // You want to go through every block until you hit the end.
-  // Make sure you read the explanation for the next_block function above.
-  // It should come in handy!
-
-  while (ptrFreeBlock && ptrFreeBlock->info.size > checkSize) {
+  // YOUR CODE HERE!
+  //
+  while(ptrFreeBlock != NULL){
+    if (ptrFreeBlock->info.size <= checkSize) return ptrFreeBlock;
     ptrFreeBlock = next_block(ptrFreeBlock);
   }
-  if(!ptrFreeBlock) return NULL;
-  else return ptrFreeBlock;
-  // To begin, you can ignore the free list and just go through every single
-  // block in your memory looking for a free space big enough.
-  //
-  // Return NULL when you cannot find any available node big enough.
 
   return NULL;
 }
@@ -168,12 +159,20 @@ Block* searchFreeList(size_t reqSize) {
   Block* ptrFreeBlock = free_list_head;
   long int checkSize = -reqSize;
 
-  if(free_list_head == NULL) return;
-  while(ptrFreeBlock && ptrFreeBlock->info.size > checkSize){
+  //
+  // YOUR CODE HERE!
+  //
+
+  if(free_list_head == NULL) return NULL;
+
+  while(ptrFreeBlock != NULL){
+    if(ptrFreeBlock->info.size <= checkSize) return ptrFreeBlock;
     ptrFreeBlock = ptrFreeBlock->freeNode.nextFree;
   }
-  if(!ptrFreeBlock) return NULL;
-  else return ptrFreeBlock;
+
+  // When you are ready, you can implement the free list.
+
+  return NULL;
 }
 
 // TOP-LEVEL ALLOCATOR INTERFACE ------------------------------------
@@ -197,48 +196,71 @@ void* mm_malloc(size_t size) {
   // Round up for correct alignment
   reqSize = ALIGNMENT * ((reqSize + ALIGNMENT - 1) / ALIGNMENT);
 
-  //Two Implementations, one with a free block list, one without.
-  // ptrFreeBlock = searchFreeList(reqSize);
-  ptrFreeBlock = searchList(reqSize);
+  //
+  // YOUR CODE HERE! (ignore size and use reqSize for the amount to allocate!)
+  //
 
-  // ptrFreeBlock is either NULL (no room left) or a currently free block
-  if (ptrFreeBlock != NULL) {
-    //ptrFreeBlock's payload is big enough for a BlockInfo and the size requested
-    if(ptrFreeBlock->info.size <= -reqSize - sizeof(BlockInfo)){
-      splitBlock = (Block*)UNSCALED_POINTER_ADD(ptrFreeBlock, reqSize + sizeof(BlockInfo));
-      splitBlock->info.size = ptrFreeBlock->info.size + sizeof(BlockInfo) + (unsigned int)reqSize;
-      splitBlock->info.prev = ptrFreeBlock;
-      splitBlock->freeNode.nextFree = NULL;
-      splitBlock->freeNode.prevFree = NULL;
-      if(ptrFreeBlock == malloc_list_tail) malloc_list_tail = splitBlock;
-      ptrFreeBlock->info.size = reqSize;
-      Block* nextBlock = next_block(splitBlock);
-      if(nextBlock!=NULL){
-        nextBlock->info.prev = splitBlock;
-        coalesce(splitBlock);
-      }
-    }
-    else{
-      ptrFreeBlock->info.size *= -1;
-    }
-  } 
-  else{
+  // ptrFreeBlock = searchList(reqSize);
+  ptrFreeBlock = searchFreeList(reqSize);
+
+  //Allocate a new block
+  if(ptrFreeBlock == NULL){
     requestMoreSpace(sizeof(BlockInfo) + reqSize);
-    Block* newBlock;
-    if(malloc_list_tail == NULL) {
-      newBlock = first_block();
-      newBlock->info.prev = NULL;
+    //First Block to be allocated
+    if(malloc_list_tail == NULL){
+      ptrFreeBlock = first_block();
+      ptrFreeBlock->info.prev = NULL;
     }
+
+    //Otherwise, add to the end of the heap
     else{
-      newBlock = (Block*)UNSCALED_POINTER_ADD(malloc_list_tail, sizeof(BlockInfo) + abs(malloc_list_tail->info.size));
-      newBlock->info.prev = malloc_list_tail;
+      ptrFreeBlock = (Block*)UNSCALED_POINTER_ADD(malloc_list_tail, sizeof(BlockInfo) + abs(malloc_list_tail->info.size));
+      ptrFreeBlock->info.prev = malloc_list_tail;
     }
-    newBlock->info.size = reqSize;
-    newBlock->freeNode.nextFree = NULL;
-    newBlock->freeNode.prevFree = NULL;
-    malloc_list_tail = newBlock;
-    return UNSCALED_POINTER_ADD(newBlock, sizeof(BlockInfo));
+
+    //In both cases, initialize the block and set the tail pointer to it
+    ptrFreeBlock->info.size = reqSize;
+    malloc_list_tail = ptrFreeBlock;
+
+    return UNSCALED_POINTER_ADD(ptrFreeBlock, sizeof(BlockInfo));
   }
+
+  //Split the free block that was found if it is big enough for reqSize and a new block header
+  else if(ptrFreeBlock->info.size < -reqSize - sizeof(BlockInfo)){
+    //set splitBlock to the distance of the block we are allocating
+    splitBlock = (Block*)UNSCALED_POINTER_ADD(ptrFreeBlock, (unsigned int) reqSize + sizeof(BlockInfo));
+
+    //initialize splitBlock as a free block add it to free list
+    splitBlock->info.size = ptrFreeBlock->info.size + sizeof(BlockInfo) + (unsigned int)reqSize;
+    splitBlock->info.prev = ptrFreeBlock;
+    splitBlock->freeNode.nextFree = NULL;
+    splitBlock->freeNode.prevFree = NULL;
+    free_list_insert(splitBlock);
+    coalesce(splitBlock);
+    
+    //Reattach the next block to splitBlock
+    Block* nextBlock = next_block(ptrFreeBlock);
+    if(nextBlock) nextBlock->info.prev = splitBlock;
+
+    //If we are splitting the tail block, we need to change the pointer to the new free block
+    if(malloc_list_tail == ptrFreeBlock) malloc_list_tail = splitBlock;
+
+    //initialize the block we will be allocating
+    ptrFreeBlock->info.size = reqSize;
+
+    //remove free block from free list
+    free_list_remove(ptrFreeBlock);
+  }
+
+  //The free block is not big enough to house the reqSize and a block header
+  else{
+    ptrFreeBlock->info.size *= -1;
+   
+   //remove free block from free list
+  free_list_remove(ptrFreeBlock);
+
+  }
+
   return UNSCALED_POINTER_ADD(ptrFreeBlock, sizeof(BlockInfo));
 }
 
@@ -247,49 +269,59 @@ void coalesce(Block* blockInfo) {
   Block* previousBlock = blockInfo->info.prev;
   Block* tmpBlock = NULL;
 
-  if(nextBlock != NULL && nextBlock->info.size <= 0){
+  //
+  // YOUR CODE HERE!
+  //
+
+  //if the next block in the heap is a free block
+  if(nextBlock != NULL && nextBlock->info.size < 0){
+    //if the block after the block we plan of skipping exists
     if(next_block(nextBlock) != NULL){
       next_block(nextBlock)->info.prev = blockInfo;
     }
+
+    //if the block we plan on removing is the tail
     else{
-      malloc_list_tail = blockInfo; 
+      malloc_list_tail = blockInfo;
     }
+
+    //in both cases, you must remove the block that you are jumping from the free list
+    free_list_remove(nextBlock);
+
+    //update the size of the now merged blockInfo
     blockInfo->info.size += (-sizeof(BlockInfo) + (nextBlock->info.size));
   }
-  if(previousBlock != NULL && previousBlock->info.size <= 0){
+  
+  // if the block behind the merged/unmerged block is free, then recurse using that block
+  if(previousBlock == NULL) return;
+  Block* firstBlock = first_block();
+  if(previousBlock != NULL && previousBlock->info.size < 0){
     coalesce(previousBlock);
   }
-  
 
-  // You can change or remove the declarations
-  // above.  They are included as minor hints.
 }
 
 /* Free the block referenced by ptr. */
 void mm_free(void* ptr) {
   Block* blockInfo = (Block*)UNSCALED_POINTER_SUB(ptr, sizeof(BlockInfo));
 
-  if(ptr == NULL) return;
-  if(blockInfo == NULL) return;
+  //
+  // YOUR CODE HERE!
+  //
   blockInfo->info.size *= -1;
   blockInfo->freeNode.nextFree = NULL;
   blockInfo->freeNode.prevFree = NULL;
+  free_list_insert(blockInfo);
 
   coalesce(blockInfo);
 }
 
 void free_list_insert(Block* ptrFreeBlock){
-  //inserts at head, that is makes the head pointer the new node and connects that to the old head pointer
-  if(ptrFreeBlock == NULL) return NULL;
-  if(free_list_head == NULL) {
-    ptrFreeBlock->freeNode.nextFree = NULL;
-    ptrFreeBlock->freeNode.prevFree = NULL;
-    free_list_head = ptrFreeBlock;
-  }
-    else{
+  //linked list insert at head
+  if(free_list_head == NULL) free_list_head = ptrFreeBlock;
+  else{
     free_list_head->freeNode.prevFree = ptrFreeBlock;
     ptrFreeBlock->freeNode.nextFree = free_list_head;
-    ptrFreeBlock->freeNode.prevFree = NULL;
     free_list_head = ptrFreeBlock;
   }
 }
@@ -297,23 +329,20 @@ void free_list_insert(Block* ptrFreeBlock){
 void free_list_remove(Block* ptrFreeBlock){
   Block* nextFree = ptrFreeBlock->freeNode.nextFree;
   Block* prevFree = ptrFreeBlock->freeNode.prevFree;
-  if(!ptrFreeBlock) return;
-  if(!nextFree && !prevFree){
-    free_list_head = NULL;
-    return;
-  }
-  if(nextFree && !prevFree){
+  if(nextFree == NULL && prevFree == NULL) free_list_head = NULL;
+  else if(prevFree == NULL) {
     nextFree->freeNode.prevFree = NULL;
     free_list_head = nextFree;
   }
-  if(!nextFree && prevFree){
+  else if(nextFree == NULL){
     prevFree->freeNode.nextFree = NULL;
   }
-  if(nextFree != NULL && prevFree != NULL){
+  else{
     nextFree->freeNode.prevFree = prevFree;
     prevFree->freeNode.nextFree = nextFree;
   }
 }
+
 // PROVIDED FUNCTIONS -----------------------------------------------
 //
 // You do not need to modify these, but they might be helpful to read
